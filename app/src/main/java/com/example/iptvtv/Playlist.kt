@@ -5,7 +5,7 @@ import java.io.File
 
 object Playlist {
     /** Nguồn phát gắn sẵn. Sửa link ở đây khi cần đổi nguồn. */
-    const val SOURCE_URL = "https://tinyurl.com/vxm3u"
+    const val SOURCE_URL = "https://raw.githubusercontent.com/guiterhd-bit/direct-link/refs/heads/main/playlist.M3U"
 
     private val attr = Regex("""([\w-]+)="([^"]*)"""")
     private fun cacheFile(c: Context) = File(c.filesDir, "playlist.m3u")
