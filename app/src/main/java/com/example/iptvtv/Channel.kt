@@ -4,11 +4,11 @@ data class Channel(
     val name: String,
     val url: String,
     val group: String,
-    val logo: String,
-    val id: String,
-    val headers: Map<String, String>,
-    val manifestType: String,
-    val isDrm: Boolean,
+    val logo: String = "",
+    val tvgId: String = "",
+    val headers: Map<String, String> = emptyMap(),
+    val manifestType: String = "",
+    val drm: Boolean = false,
     val licKey: String = ""
 )
 
