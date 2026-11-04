@@ -37,7 +37,7 @@ object Playlist {
         var epg: String? = null
         var name = ""; var group = ""; var logo = ""; var id = ""
         var hdr = HashMap<String, String>()
-        var mtype = ""; var drm = false
+        var mtype = ""; var drm = false; var licKey = ""
         for (raw in text.lineSequence()) {
             val line = raw.trim()
             when {
@@ -53,12 +53,13 @@ object Playlist {
                     name = line.substringAfterLast(',').trim()
                 }
                 line.startsWith("#KODIPROP:", ignoreCase = true) -> {
-                    // Chỉ đọc gợi ý định dạng; kênh khai báo DRM được đánh dấu để app báo rõ là không hỗ trợ
-                    val kv = line.substringAfter(':').split('=', limit = 2)
-                    if (kv.size == 2) when (kv[0].trim().lowercase()) {
-                        "inputstream.adaptive.manifest_type" -> mtype = kv[1].trim().lowercase()
-                        "inputstream.adaptive.license_type" -> drm = true
-                    }
+    val kv = line.substringAfter(':').split('=', limit = 2)
+    if (kv.size == 2) when (kv[0].trim().lowercase()) {
+        "inputstream.adaptive.manifest_type" -> mtype = kv[1].trim().lowercase()
+        "inputstream.adaptive.license_type" -> drm = true
+        // Thêm dòng này để đọc thông tin khóa mã hóa ClearKey
+        "inputstream.adaptive.license_key" -> licKey = kv[1].trim() 
+    }
                 }
                 line.startsWith("#EXTVLCOPT:", ignoreCase = true) -> {
                     val kv = line.substringAfter(':').split('=', limit = 2)
@@ -76,8 +77,8 @@ object Playlist {
                         val kv = pair.split('=', limit = 2)
                         if (kv.size == 2 && kv[0].isNotBlank()) hdr[kv[0].trim()] = kv[1].trim()
                     }
-                    if (name.isNotEmpty()) out.add(Channel(name, url, group.ifBlank { "Khác" }, logo, id, hdr, mtype, drm))
-                    name = ""; group = ""; logo = ""; id = ""; hdr = HashMap(); mtype = ""; drm = false
+                    if (name.isNotEmpty()) out.add(Channel(name, url, group.ifBlank { "Khác" }, logo, id, hdr, mtype, drm, licKey))
+name = ""; group = ""; logo = ""; id = ""; hdr = HashMap(); mtype = ""; drm = false; licKey = ""
                 }
             }
         }
