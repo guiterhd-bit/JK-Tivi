@@ -37,7 +37,7 @@ object Playlist {
         var epg: String? = null
         var name = ""; var group = ""; var logo = ""; var id = ""
         var hdr = HashMap<String, String>()
-        var mtype = ""; var drm = false; var licKey = ""
+        var mtype = ""; var drm = false; var licKey = ""; var licenseType = ""
         for (raw in text.lineSequence()) {
             val line = raw.trim()
             when {
@@ -56,7 +56,7 @@ object Playlist {
     val kv = line.substringAfter(':').split('=', limit = 2)
     if (kv.size == 2) when (kv[0].trim().lowercase()) {
         "inputstream.adaptive.manifest_type" -> mtype = kv[1].trim().lowercase()
-        "inputstream.adaptive.license_type" -> drm = true
+        "inputstream.adaptive.license_type" -> { licenseType = kv[1].trim().lowercase(); drm = licenseType.isNotBlank() }
         // Thêm dòng này để đọc thông tin khóa mã hóa ClearKey
         "inputstream.adaptive.license_key" -> licKey = kv[1].trim() 
     }
@@ -77,8 +77,8 @@ object Playlist {
                         val kv = pair.split('=', limit = 2)
                         if (kv.size == 2 && kv[0].isNotBlank()) hdr[kv[0].trim()] = kv[1].trim()
                     }
-                    if (name.isNotEmpty()) out.add(Channel(name, url, group.ifBlank { "Khác" }, logo, id, hdr, mtype, drm, licKey))
-name = ""; group = ""; logo = ""; id = ""; hdr = HashMap(); mtype = ""; drm = false; licKey = ""
+                    if (name.isNotEmpty()) out.add(Channel(name, url, group.ifBlank { "Khác" }, logo, id, hdr, mtype, drm, licKey, licenseType))
+name = ""; group = ""; logo = ""; id = ""; hdr = HashMap(); mtype = ""; drm = false; licKey = ""; licenseType = ""
                 }
             }
         }

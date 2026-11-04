@@ -6,6 +6,7 @@ import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
 import android.util.Log
+import android.util.Base64
 import android.os.Looper
 import android.text.TextUtils
 import android.view.Gravity
@@ -19,6 +20,7 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import androidx.annotation.OptIn
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -27,8 +29,9 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
-import androidx.media3.exoplayer.dash.DashMediaSource
-import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
+import androidx.media3.exoplayer.drm.FrameworkMediaDrm
+import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
@@ -273,23 +276,56 @@ class MainActivity : Activity() {
         }
     }
 
+    // Kodi M3U ClearKey format: KID:KEY (both hexadecimal, 16 bytes each).
+    // Media3 LocalMediaDrmCallback expects a ClearKey JSON license response.
+    private fun clearKeyLicenseResponse(value: String): ByteArray {
+        val pair = value.trim().substringBefore('|').split(':', limit = 2)
+        require(pair.size == 2) { "license_key phải có dạng KID:KEY" }
+        val kid = pair[0].trim()
+        val key = pair[1].trim()
+        fun decodeHex(hex: String): ByteArray {
+            require(hex.length == 32 && hex.all { it in "0123456789abcdefABCDEF" }) {
+                "KID/KEY ClearKey phải là chuỗi hex 32 ký tự"
+            }
+            return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        }
+        fun base64Url(bytes: ByteArray): String =
+            Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+        val kid64 = base64Url(decodeHex(kid))
+        val key64 = base64Url(decodeHex(key))
+        val json = """{"keys":[{"kty":"oct","kid":"$kid64","k":"$key64"}],"type":"temporary"}"""
+        return json.toByteArray(Charsets.UTF_8)
+    }
+
     // ---------- Phát kênh ----------
     private fun play(index: Int) {
         if (all.isEmpty()) return
         cur = (index % all.size + all.size) % all.size
         val ch = all[cur]
-        if (ch.drm) {
-            player.stop(); player.clearMediaItems()
+        val u = ch.url.lowercase()
+        val isClearKey = ch.drm && (
+            ch.licenseType.equals("clearkey", ignoreCase = true) ||
+            (ch.licenseType.isBlank() && ch.licKey.isNotBlank())
+        )
+        if (ch.drm && !isClearKey) {
+            player.stop()
+            player.clearMediaItems()
             showBar()
-            showToast("Kênh có mã hóa DRM – ứng dụng không hỗ trợ", 6000)
+            showToast("DRM ${ch.licenseType.ifBlank { "không xác định" }} chưa được cấu hình", 7000)
             return
         }
-        val u = ch.url.lowercase()
+        if (isClearKey && ch.licKey.isBlank()) {
+            showToast("Kênh ClearKey thiếu license_key trong M3U", 7000)
+            return
+        }
         val dash = u.contains(".mpd") || ch.manifestType == "mpd" || ch.manifestType == "dash"
         val hls = !dash && (u.contains(".m3u8") || ch.manifestType == "hls")
         val item = MediaItem.Builder().setUri(ch.url).apply {
             if (dash) setMimeType(MimeTypes.APPLICATION_MPD)
             else if (hls) setMimeType(MimeTypes.APPLICATION_M3U8)
+            if (isClearKey) {
+                setDrmConfiguration(MediaItem.DrmConfiguration.Builder(C.CLEARKEY_UUID).build())
+            }
         }.build()
         // Header riêng cho từng kênh (User-Agent, Referer...) nếu playlist có khai báo
         val headers = HashMap<String, String>(ch.headers)
@@ -301,12 +337,18 @@ class MainActivity : Activity() {
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(10000)
             .setReadTimeoutMs(10000)
-        // Chọn bộ phát trực tiếp theo định dạng (DASH / HLS), không phụ thuộc cơ chế tự dò
-        val source = when {
-            dash -> DashMediaSource.Factory(http).createMediaSource(item)
-            hls -> HlsMediaSource.Factory(http).createMediaSource(item)
-            else -> DefaultMediaSourceFactory(this).setDataSourceFactory(http).createMediaSource(item)
+        // Với ClearKey, tạo phản hồi license cục bộ từ cặp KID:KEY trong M3U.
+        // Các kênh thường vẫn dùng pipeline HLS/DASH mặc định.
+        val mediaSourceFactory = DefaultMediaSourceFactory(this)
+            .setDataSourceFactory(http)
+        if (isClearKey) {
+            val drmResponse = clearKeyLicenseResponse(ch.licKey)
+            val drmManager = DefaultDrmSessionManager.Builder()
+                .setUuidAndExoMediaDrmProvider(C.CLEARKEY_UUID, FrameworkMediaDrm.DEFAULT_PROVIDER)
+                .build(LocalMediaDrmCallback(drmResponse))
+            mediaSourceFactory.setDrmSessionManagerProvider { drmManager }
         }
+        val source = mediaSourceFactory.createMediaSource(item)
         player.setMediaSource(source)
         player.prepare()
         player.playWhenReady = true
