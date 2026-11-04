@@ -4,10 +4,10 @@ plugins {
 }
 
 android {
-    namespace = "com.example.iptvtv"
+    namespace = "com.ipvt.jktv"
     compileSdk = 34
     defaultConfig {
-        applicationId = "com.example.iptvtv"
+        applicationId = "com.ipvt.jktv"
         minSdk = 21
         targetSdk = 34
         versionCode = 1
