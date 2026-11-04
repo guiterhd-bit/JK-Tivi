@@ -153,14 +153,14 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.END
             addView(barClock); addView(barDate); addView(barTech)
         }
-        val divider = View(this).apply { setBackgroundColor(0x55FFC83D) }
+        val barDivider = View(this).apply { setBackgroundColor(0x55FFC83D) }
         bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             background = Glass.card(density, 28)
             setPadding(dp(28), dp(18), dp(32), dp(18)); visibility = View.GONE
             addView(barLogo, LinearLayout.LayoutParams(dp(120), dp(68)).apply { rightMargin = dp(24) })
             addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(divider, LinearLayout.LayoutParams(dp(1), dp(60)).apply { setMargins(dp(16), 0, dp(20), 0) })
+            addView(barDivider, LinearLayout.LayoutParams(dp(1), dp(60)).apply { setMargins(dp(16), 0, dp(20), 0) })
             addView(right, LinearLayout.LayoutParams(dp(270), ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         root.addView(bar, FrameLayout.LayoutParams(
@@ -173,8 +173,8 @@ class MainActivity : Activity() {
         }
         val line = View(this).apply { setBackgroundColor(0x55FFC83D) }
         list = ListView(this).apply {
-            divider = null
-            selector = Glass.rowSelector(density)
+            this.divider = null
+            this.selector = Glass.rowSelector(density)
             setPadding(dp(8), dp(6), dp(8), dp(10)); clipToPadding = false
             setOnItemClickListener { _, _, pos, _ -> play(shownIdx[pos]); hidePanel() }
         }
