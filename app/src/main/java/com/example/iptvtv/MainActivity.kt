@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
+import android.util.Log
 import android.os.Looper
 import android.text.TextUtils
 import android.view.Gravity
@@ -23,7 +24,12 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.dash.DashMediaSource
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.ui.PlayerView
@@ -32,6 +38,9 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import kotlin.concurrent.thread
+
+private const val DEFAULT_UA =
+    "Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
 @OptIn(UnstableApi::class)
 class MainActivity : Activity() {
@@ -86,7 +95,12 @@ class MainActivity : Activity() {
         player = ExoPlayer.Builder(this).setLoadControl(load).setBandwidthMeter(meter).build()
         playerView.player = player
         player.addListener(object : Player.Listener {
-            override fun onPlayerError(error: PlaybackException) = showToast("Không phát được kênh này")
+            override fun onPlayerError(error: PlaybackException) {
+                val c = error.cause
+                val http = if (c is HttpDataSource.InvalidResponseCodeException) " (HTTP ${c.responseCode})" else ""
+                Log.e("JKTivi", "Playback error: ${error.errorCodeName}", error)
+                showToast("Lỗi phát: ${error.errorCodeName}$http", 8000)
+            }
         })
 
         val onEpg = { ui.post { if (!isDestroyed) onEpgUpdated() }; Unit }
@@ -192,9 +206,9 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
-    private fun showToast(text: String) {
+    private fun showToast(text: String, durationMs: Long = 3000) {
         toast.text = text; toast.visibility = View.VISIBLE
-        ui.removeCallbacks(hideToastR); ui.postDelayed(hideToastR, 3000)
+        ui.removeCallbacks(hideToastR); ui.postDelayed(hideToastR, durationMs)
     }
 
     // ---------- Thanh thông tin kênh ----------
@@ -264,14 +278,36 @@ class MainActivity : Activity() {
         if (all.isEmpty()) return
         cur = (index % all.size + all.size) % all.size
         val ch = all[cur]
+        if (ch.drm) {
+            player.stop(); player.clearMediaItems()
+            showBar()
+            showToast("Kênh có mã hóa DRM – ứng dụng không hỗ trợ", 6000)
+            return
+        }
         val u = ch.url.lowercase()
+        val dash = u.contains(".mpd") || ch.manifestType == "mpd" || ch.manifestType == "dash"
+        val hls = !dash && (u.contains(".m3u8") || ch.manifestType == "hls")
         val item = MediaItem.Builder().setUri(ch.url).apply {
-            when {
-                u.contains(".mpd") -> setMimeType(MimeTypes.APPLICATION_MPD)
-                u.contains(".m3u8") -> setMimeType(MimeTypes.APPLICATION_M3U8)
-            }
+            if (dash) setMimeType(MimeTypes.APPLICATION_MPD)
+            else if (hls) setMimeType(MimeTypes.APPLICATION_M3U8)
         }.build()
-        player.setMediaItem(item)
+        // Header riêng cho từng kênh (User-Agent, Referer...) nếu playlist có khai báo
+        val headers = HashMap<String, String>(ch.headers)
+        val uaKey = headers.keys.firstOrNull { it.equals("User-Agent", ignoreCase = true) }
+        val ua = uaKey?.let { headers.remove(it) } ?: DEFAULT_UA
+        val http = DefaultHttpDataSource.Factory()
+            .setUserAgent(ua)
+            .setDefaultRequestProperties(headers)
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(10000)
+            .setReadTimeoutMs(10000)
+        // Chọn bộ phát trực tiếp theo định dạng (DASH / HLS), không phụ thuộc cơ chế tự dò
+        val source = when {
+            dash -> DashMediaSource.Factory(http).createMediaSource(item)
+            hls -> HlsMediaSource.Factory(http).createMediaSource(item)
+            else -> DefaultMediaSourceFactory(this).setDataSourceFactory(http).createMediaSource(item)
+        }
+        player.setMediaSource(source)
         player.prepare()
         player.playWhenReady = true
         getSharedPreferences("s", MODE_PRIVATE).edit()
