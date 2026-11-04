@@ -35,3 +35,7 @@ Phong cách "liquid glass" đen – vàng – trắng: thẻ kính nổi bo góc
 ## Gợi ý định dạng
 Dòng `#KODIPROP:inputstream.adaptive.manifest_type=hls` (hoặc `mpd`) giúp app nhận đúng định dạng khi link không có đuôi .m3u8/.mpd.
 Kênh có `license_type` (DRM) sẽ hiện thông báo "không hỗ trợ" thay vì màn hình đen.
+
+## Hàng kênh trên màn hình chính (Projectivy Launcher)
+App đăng một hàng "JK Tivi" gồm 12 kênh (VTV1–VTV10, QPVN, ANTV) bằng Android TV Preview Channel. Logo nằm trong `app/src/main/res/drawable-nodpi/`.
+Mở app một lần để hàng kênh được tạo, rồi bật hàng đó trong Projectivy (cài đặt hàng/kênh). Chọn một kênh sẽ mở app và phát kênh có tên khớp trong playlist (code ở `HomeChannel.kt`).

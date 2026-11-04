@@ -3,6 +3,7 @@ package com.example.iptvtv
 import android.app.Activity
 import android.graphics.Color
 import android.graphics.Typeface
+import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.util.Log
@@ -86,10 +87,13 @@ class MainActivity : Activity() {
     private var shownIdx: List<Int> = emptyList()
     private var cur = -1
     private val digits = StringBuilder()
+    private var pendingKey: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
+        pendingKey = intent?.getStringExtra(HomeChannel.EXTRA_KEY)
+        thread { HomeChannel.publish(applicationContext) }
 
         // Đệm nhỏ để vào kênh và chuyển kênh nhanh
         val load = DefaultLoadControl.Builder()
@@ -253,6 +257,15 @@ class MainActivity : Activity() {
         if (bar.visibility == View.VISIBLE) refreshBar()
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val key = intent.getStringExtra(HomeChannel.EXTRA_KEY) ?: return
+        if (all.isEmpty()) { pendingKey = key; return }
+        val i = HomeChannel.indexOf(all, key)
+        if (i >= 0) play(i) else showToast("Chưa có kênh này trong danh sách", 3000)
+    }
+
     // ---------- Dữ liệu ----------
     private fun setChannels(newList: List<Channel>) {
         if (newList.isEmpty() || newList == all) return
@@ -268,7 +281,9 @@ class MainActivity : Activity() {
             val lu = p.getString("last", null); val ln = p.getString("lastName", null)
             val idx = newList.indexOfFirst { it.url == lu && it.name == ln }
                 .takeIf { it >= 0 } ?: newList.indexOfFirst { it.url == lu }
-            play(idx.coerceAtLeast(0))
+            val fromHome = pendingKey?.let { HomeChannel.indexOf(newList, it) } ?: -1
+            pendingKey = null
+            play(if (fromHome >= 0) fromHome else idx.coerceAtLeast(0))
         } else {
             // Cập nhật danh sách ngầm, không làm gián đoạn kênh đang xem
             cur = newList.indexOfFirst { it.url == currentUrl && it.name == currentName }
