@@ -7,7 +7,7 @@
 - Phím số: nhập số kênh (tự chuyển sau 1,5 giây hoặc bấm OK)
 
 ## Nguồn phát
-Đổi link trong `app/src/main/java/com/example/iptvtv/Playlist.kt` (SOURCE_URL).
+Đổi link trong `app/src/main/java/com/iptv/jktivi/Playlist.kt` (SOURCE_URL).
 Có thể gắn sẵn danh sách trong APK bằng cách đặt file `app/src/main/assets/playlist.m3u`.
 Nhóm kênh lấy từ thuộc tính `group-title` của file M3U.
 
@@ -39,3 +39,11 @@ Kênh có `license_type` (DRM) sẽ hiện thông báo "không hỗ trợ" thay 
 ## Hàng kênh trên màn hình chính (Projectivy Launcher)
 App đăng một hàng "JK Tivi" gồm 12 kênh (VTV1–VTV10, QPVN, ANTV) bằng Android TV Preview Channel. Logo nằm trong `app/src/main/res/drawable-nodpi/`.
 Mở app một lần để hàng kênh được tạo, rồi bật hàng đó trong Projectivy (cài đặt hàng/kênh). Chọn một kênh sẽ mở app và phát kênh có tên khớp trong playlist (code ở `HomeChannel.kt`).
+
+## Cảm ứng
+- Chạm màn hình: hiện/ẩn thanh thông tin và hàng nút (☰ danh sách, 🔍 tìm kênh, ⏮ ⏭ đổi kênh, ⏯ tạm dừng, ⛶ tỉ lệ hình).
+- Vuốt lên/xuống: kênh kế tiếp/trước. Vuốt sang phải: mở danh sách kênh; vuốt sang trái hoặc chạm ngoài danh sách: đóng.
+- Chạm đúp: tạm dừng/phát tiếp. Trong danh sách, chạm phần ◀ / ▶ ở tiêu đề để đổi nhóm; có ô tìm kênh không phân biệt dấu.
+
+## Tốc độ tải
+Playlist dùng ETag (server trả 304 nếu không đổi), cache ghi nguyên tử, EPG và đăng kênh trang chủ chạy sau với ưu tiên thấp, HLS dùng chunkless preparation.
