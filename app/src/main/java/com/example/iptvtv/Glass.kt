@@ -1,4 +1,4 @@
-package com.example.iptvtv
+package com.iptv.jktivi
 
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable

@@ -1,7 +1,8 @@
-package com.example.iptvtv
+package com.iptv.jktivi
 
 import android.content.Context
 import java.io.File
+import java.net.HttpURLConnection
 
 object Playlist {
     /** Nguồn phát gắn sẵn. Sửa link ở đây khi cần đổi nguồn. */
@@ -20,12 +21,22 @@ object Playlist {
     }
 
     /** Tải bản mới (tự theo redirect của tinyurl) và lưu cache. */
-    fun download(c: Context): PlaylistData {
-        val conn = Net.open(SOURCE_URL)
+    fun download(c: Context): PlaylistData? {
+        val prefs = c.getSharedPreferences("playlist_meta", Context.MODE_PRIVATE)
+        // Chỉ gửi ETag khi đã có cache thật, để server trả 304 nếu danh sách không đổi
+        val etag = if (cacheFile(c).exists()) prefs.getString("etag", null) else null
+        val conn = Net.open(SOURCE_URL, 8000, etag)
         try {
+            if (conn.responseCode == HttpURLConnection.HTTP_NOT_MODIFIED) return null
             val text = conn.inputStream.bufferedReader().use { it.readText() }
             val data = parse(text)
-            if (data.channels.isNotEmpty()) cacheFile(c).writeText(text)
+            if (data.channels.isNotEmpty()) {
+                val f = cacheFile(c)
+                val tmp = File(f.path + ".tmp")
+                tmp.writeText(text)
+                tmp.renameTo(f)
+                prefs.edit().putString("etag", conn.getHeaderField("ETag")).apply()
+            }
             return data
         } finally {
             conn.disconnect()

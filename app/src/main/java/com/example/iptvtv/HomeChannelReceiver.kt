@@ -1,4 +1,4 @@
-package com.example.iptvtv
+package com.iptv.jktivi
 
 import android.content.BroadcastReceiver
 import android.content.Context

@@ -1,4 +1,4 @@
-package com.example.iptvtv
+package com.iptv.jktivi
 
 import android.app.Activity
 import android.graphics.Color
@@ -11,10 +11,18 @@ import android.util.Base64
 import android.os.Looper
 import android.text.TextUtils
 import android.view.Gravity
+import android.content.Context
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.GestureDetector
 import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -33,10 +41,13 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -89,11 +100,19 @@ class MainActivity : Activity() {
     private val digits = StringBuilder()
     private var pendingKey: String? = null
 
+    // cảm ứng
+    private lateinit var touchBar: LinearLayout
+    private lateinit var searchBox: EditText
+    private lateinit var gestures: GestureDetector
+    private var query = ""
+    private var resizeIdx = 0
+    private val hideTouchR = Runnable { hideTouchControls() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
         pendingKey = intent?.getStringExtra(HomeChannel.EXTRA_KEY)
-        thread { HomeChannel.publish(applicationContext) }
+        lowThread(4000) { HomeChannel.publish(applicationContext) }
 
         // Đệm nhỏ để vào kênh và chuyển kênh nhanh
         val load = DefaultLoadControl.Builder()
@@ -114,13 +133,13 @@ class MainActivity : Activity() {
         thread {
             val cached = Playlist.cached(this)
             ui.post { if (!isDestroyed) setChannels(cached.channels) }
-            if (cached.epgUrl != null) thread { Epg.load(applicationContext, cached.epgUrl, onEpg) }
+            if (cached.epgUrl != null) lowThread { Epg.load(applicationContext, cached.epgUrl, onEpg) }
 
             val fresh = runCatching { Playlist.download(this) }.getOrNull()
             if (fresh != null && fresh.channels.isNotEmpty()) {
                 ui.post { if (!isDestroyed) setChannels(fresh.channels) }
                 if (fresh.epgUrl != null && fresh.epgUrl != cached.epgUrl)
-                    thread { Epg.load(applicationContext, fresh.epgUrl, onEpg) }
+                    lowThread { Epg.load(applicationContext, fresh.epgUrl, onEpg) }
             }
         }
     }
@@ -145,6 +164,32 @@ class MainActivity : Activity() {
             useController = false; keepScreenOn = true; isFocusable = false
         }
         root.addView(playerView, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+
+        // Lớp bắt cử chỉ nằm trên video, dưới mọi thành phần giao diện khác
+        gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent) = true
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (panel.visibility == View.VISIBLE) hidePanel() else toggleTouchControls()
+                return true
+            }
+            override fun onDoubleTap(e: MotionEvent): Boolean { togglePause(); return true }
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+                if (e1 == null) return false
+                val dx = e2.x - e1.x
+                val dy = e2.y - e1.y
+                if (Math.abs(dx) > Math.abs(dy)) {
+                    if (Math.abs(dx) < dp(80)) return false
+                    if (dx > 0) showPanel() else hidePanel()
+                } else {
+                    if (Math.abs(dy) < dp(80)) return false
+                    if (dy < 0) play(cur + 1) else play(cur - 1)
+                }
+                return true
+            }
+        })
+        val touchLayer = View(this)
+        touchLayer.setOnTouchListener { _, e -> gestures.onTouchEvent(e); true }
+        root.addView(touchLayer, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
 
         // thông báo nhỏ (số kênh đang nhập, lỗi) – viên kính vàng
         toast = tv(30f, gold, true).apply {
@@ -191,6 +236,13 @@ class MainActivity : Activity() {
         // bảng kính danh sách kênh nổi bên trái
         groupTitle = tv(22f, gold, true).apply {
             gravity = Gravity.CENTER; setPadding(dp(8), dp(18), dp(8), dp(14))
+            setOnTouchListener { v, e ->
+                if (e.action == MotionEvent.ACTION_UP && query.isEmpty()) {
+                    resetPanelTimer()
+                    if (e.x < v.width / 3f) changeGroup(-1) else if (e.x > v.width * 2 / 3f) changeGroup(1)
+                }
+                true
+            }
         }
         val line = View(this).apply { setBackgroundColor(0x55FFC83D) }
         list = ListView(this).apply {
@@ -198,6 +250,24 @@ class MainActivity : Activity() {
             this.selector = Glass.rowSelector(density)
             setPadding(dp(8), dp(6), dp(8), dp(10)); clipToPadding = false
             setOnItemClickListener { _, _, pos, _ -> play(shownIdx[pos]); hidePanel() }
+            setOnTouchListener { _, _ -> resetPanelTimer(); false }
+        }
+        searchBox = EditText(this).apply {
+            hint = "Tìm kênh…"; setHintTextColor(muted); setTextColor(Color.WHITE); textSize = 18f
+            setSingleLine(true)
+            imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+            setBackgroundColor(0x22FFFFFF)
+            setPadding(dp(18), dp(10), dp(18), dp(10)); visibility = View.GONE
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, st: Int, c: Int, a: Int) {}
+                override fun onTextChanged(s: CharSequence?, st: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    query = s?.toString().orEmpty().trim()
+                    resetPanelTimer()
+                    fillList()
+                }
+            })
+            setOnEditorActionListener { v, _, _ -> hideKeyboard(v); true }
         }
         panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -206,11 +276,45 @@ class MainActivity : Activity() {
             addView(line, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply {
                 setMargins(dp(24), 0, dp(24), 0)
             })
+            addView(searchBox, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dp(16), dp(8), dp(16), dp(4)) })
             addView(list, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
         }
-        root.addView(panel, FrameLayout.LayoutParams(dp(540), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START)
+        root.addView(panel, FrameLayout.LayoutParams(
+            minOf(dp(540), (resources.displayMetrics.widthPixels * 0.9f).toInt()),
+            ViewGroup.LayoutParams.MATCH_PARENT, Gravity.START)
             .apply { setMargins(dp(24), dp(24), 0, dp(24)) })
+
+        // Hàng nút điều khiển cảm ứng (hiện khi chạm vào màn hình)
+        touchBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; visibility = View.GONE
+            addView(touchBtn("☰") { showPanel() })
+            addView(touchBtn("🔍") { openSearch() })
+            addView(touchBtn("⏮") { play(cur - 1) })
+            addView(touchBtn("⏯") { togglePause() })
+            addView(touchBtn("⏭") { play(cur + 1) })
+            addView(touchBtn("⛶") { cycleResize() })
+        }
+        root.addView(touchBar, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        ).apply { setMargins(0, dp(24), 0, 0) })
         setContentView(root)
+        applyResize(getSharedPreferences("s", MODE_PRIVATE).getInt("resize", 0))
+    }
+
+    private fun touchBtn(label: String, onClick: () -> Unit): TextView {
+        val b = tv(26f, Color.WHITE, true)
+        b.text = label
+        b.gravity = Gravity.CENTER
+        b.background = Glass.card(density, 22)
+        b.setPadding(dp(18), dp(10), dp(18), dp(10))
+        b.isClickable = true
+        b.setOnClickListener { showTouchControls(); onClick() }
+        val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        lp.setMargins(dp(5), 0, dp(5), 0)
+        b.layoutParams = lp
+        return b
     }
 
     private fun showToast(text: String, durationMs: Long = 3000) {
@@ -363,7 +467,10 @@ class MainActivity : Activity() {
                 .build(LocalMediaDrmCallback(drmResponse))
             mediaSourceFactory.setDrmSessionManagerProvider { drmManager }
         }
-        val source = mediaSourceFactory.createMediaSource(item)
+        val source = if (hls && !isClearKey)
+            // Bắt đầu phát mà không cần tải trước một đoạn video khi playlist có đủ thông tin codec
+            HlsMediaSource.Factory(http).setAllowChunklessPreparation(true).createMediaSource(item)
+        else mediaSourceFactory.createMediaSource(item)
         player.setMediaSource(source)
         player.prepare()
         player.playWhenReady = true
@@ -423,17 +530,40 @@ class MainActivity : Activity() {
     private fun showPanel() {
         if (all.isEmpty()) return
         hideBar()
+        hideTouchControls()
         groupIndex = groups.indexOf(all[cur].group).coerceAtLeast(0)
         fillList()
         panel.visibility = View.VISIBLE
         list.requestFocus()
         list.setSelection(shownIdx.indexOf(cur).coerceAtLeast(0))
-        ui.removeCallbacks(hidePanelR); ui.postDelayed(hidePanelR, 10000)
+        resetPanelTimer()
     }
 
     private fun hidePanel() {
         ui.removeCallbacks(hidePanelR)
+        hideKeyboard(searchBox)
+        searchBox.visibility = View.GONE
+        if (query.isNotEmpty()) searchBox.setText("")
         panel.visibility = View.GONE
+    }
+
+    private fun resetPanelTimer() {
+        ui.removeCallbacks(hidePanelR)
+        ui.postDelayed(hidePanelR, if (searchBox.visibility == View.VISIBLE) 30000L else 10000L)
+    }
+
+    private fun hideKeyboard(v: View) {
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(v.windowToken, 0)
+    }
+
+    private fun openSearch() {
+        showPanel()
+        searchBox.visibility = View.VISIBLE
+        searchBox.requestFocus()
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .showSoftInput(searchBox, InputMethodManager.SHOW_IMPLICIT)
+        resetPanelTimer()
     }
 
     private fun changeGroup(d: Int) {
@@ -442,10 +572,19 @@ class MainActivity : Activity() {
         list.setSelection(0)
     }
 
+    private fun fold(s: String): String =
+        Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "").replace('đ', 'd')
+
     private fun fillList() {
         val g = groups[groupIndex]
-        shownIdx = all.indices.filter { groupIndex == 0 || all[it].group == g }
-        groupTitle.text = "◀  $g (${shownIdx.size})  ▶"
+        val q = fold(query)
+        shownIdx = all.indices.filter {
+            if (q.isNotEmpty()) fold(all[it].name).contains(q)
+            else groupIndex == 0 || all[it].group == g
+        }
+        groupTitle.text = if (q.isNotEmpty()) "Kết quả tìm kiếm (${shownIdx.size})"
+        else "◀  $g (${shownIdx.size})  ▶"
         list.adapter = RowAdapter()
     }
 
@@ -464,13 +603,66 @@ class MainActivity : Activity() {
         if (digits.length >= all.size.toString().length) commitDigits() else ui.postDelayed(commitR, 1500)
     }
 
+    // ---------- Cảm ứng ----------
+    private fun lowThread(delayMs: Long = 2500, block: () -> Unit) =
+        thread(priority = Thread.MIN_PRIORITY) { Thread.sleep(delayMs); block() }
+
+    private fun showTouchControls() {
+        touchBar.visibility = View.VISIBLE
+        ui.removeCallbacks(hideTouchR); ui.postDelayed(hideTouchR, 6000)
+    }
+
+    private fun hideTouchControls() {
+        ui.removeCallbacks(hideTouchR)
+        touchBar.visibility = View.GONE
+    }
+
+    private fun toggleTouchControls() {
+        if (touchBar.visibility == View.VISIBLE) { hideTouchControls(); hideBar() }
+        else { showTouchControls(); showBar() }
+    }
+
+    private fun togglePause() {
+        player.playWhenReady = !player.playWhenReady
+        if (player.playWhenReady) {
+            player.seekToDefaultPosition() // quay về điểm trực tiếp sau khi tạm dừng
+            showToast("▶ Đang phát")
+        } else showToast("⏸ Tạm dừng")
+    }
+
+    private fun applyResize(i: Int) {
+        resizeIdx = i
+        playerView.resizeMode = intArrayOf(
+            AspectRatioFrameLayout.RESIZE_MODE_FIT,
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
+            AspectRatioFrameLayout.RESIZE_MODE_FILL
+        )[i]
+    }
+
+    private fun cycleResize() {
+        applyResize((resizeIdx + 1) % 3)
+        getSharedPreferences("s", MODE_PRIVATE).edit().putInt("resize", resizeIdx).apply()
+        showToast(arrayOf("Vừa khung hình", "Phóng to (cắt viền)", "Kéo giãn")[resizeIdx])
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) window.decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+    }
+
     // ---------- Điều khiển remote ----------
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         if (e.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(e)
         val k = e.keyCode
+        if (touchBar.visibility == View.VISIBLE) hideTouchControls()
 
         if (panel.visibility == View.VISIBLE) {
-            ui.removeCallbacks(hidePanelR); ui.postDelayed(hidePanelR, 10000)
+            resetPanelTimer()
+            if (searchBox.hasFocus() && k != KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(e)
             when (k) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> { changeGroup(-1); return true }
                 KeyEvent.KEYCODE_DPAD_RIGHT -> { changeGroup(1); return true }

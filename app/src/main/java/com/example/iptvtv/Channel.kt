@@ -1,4 +1,4 @@
-package com.example.iptvtv
+package com.iptv.jktivi
 
 data class Channel(
     val name: String,
